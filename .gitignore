@@ -1,0 +1,7 @@
+__pycache__/
+.venv/
+data/
+checkpoints/
+outputs/
+src/i3d_shoplifting.egg-info/
+uv.lock

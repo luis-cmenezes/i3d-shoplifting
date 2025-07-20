@@ -1,0 +1,24 @@
+[project]
+name = "i3d-shoplifting"
+version = "0.1.0"
+description = "Project for fine tuning I3D model as a binary Shoplifting classificator"
+requires-python = "==3.11.11"
+dependencies = [
+    "numpy>=2.3.1",
+    "opencv-contrib-python>=4.11.0.86",
+    "torch>=2.7.1",
+    "torchvision>=0.22.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pandas",
+    "tqdm",
+    "natsort",
+    "matplotlib",
+    "scikit-learn",
+    "seaborn",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
