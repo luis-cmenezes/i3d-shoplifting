@@ -5,11 +5,38 @@ import cv2
 import numpy as np
 from natsort import natsorted
 from pathlib import Path
+import random
+import torchvision.transforms.v2 as T
 
+class VideoAugmentation:
+    def __init__(self, p_flip=0.5, color_jitter_params=None):
+        self.p_flip = p_flip
+        self.color_jitter = T.ColorJitter(**color_jitter_params)
+
+    def __call__(self, rgb_tensor, flow_tensor):
+        # Flip horizontal
+        if random.random() < self.p_flip:
+            rgb_tensor = torch.flip(rgb_tensor, dims=[-1])   # W axis
+            flow_tensor = torch.flip(flow_tensor, dims=[-1])
+            # Inverte canal x do fluxo óptico
+            flow_tensor[0] = -flow_tensor[0]
+
+        # Color jitter só no RGB
+        if self.color_jitter:
+            rgb_t = rgb_tensor.permute(1, 0, 2, 3)  # (T, C, H, W)
+            rgb_t = self.color_jitter(rgb_t)        # aplica em todos os frames
+            rgb_tensor = rgb_t.permute(1, 0, 2, 3)
+
+        return rgb_tensor, flow_tensor
+    
 class ShopliftingDataset(Dataset):
     """
     Dataset customizado para carregar os frames RGB e de Fluxo Ótico
     para o treinamento do modelo I3D.
+
+    Este dataset agora retorna os tensores ANTES e DEPOIS 
+    da aplicação do data augmentation, para fins de visualização.
+
     """
     def __init__(self, rgb_dir, flow_dir, transform=None):
         """
@@ -21,7 +48,7 @@ class ShopliftingDataset(Dataset):
         self.rgb_dir = rgb_dir
         self.flow_dir = flow_dir
         self.transform = transform
-        
+
         # Usa natsort para garantir que 'Normal_10' venha depois de 'Normal_9'
         self.samples = natsorted(os.listdir(self.rgb_dir))
 
@@ -100,14 +127,19 @@ class ShopliftingDataset(Dataset):
         # Original: (T, H, W, C) -> (C, T, H, W)
         rgb_tensor = rgb_tensor.permute(3, 0, 1, 2)
         flow_tensor = flow_tensor.permute(3, 0, 1, 2)
+        
+        # 1. Clona os tensores originais (ANTES)
+        rgb_before = rgb_tensor.clone()
+        flow_before = flow_tensor.clone()
 
-        # Aplica transformações (data augmentation) se existirem
+        # 2. Aplica a transformação. Os tensores (rgb_tensor, flow_tensor)
+        #    serão modificados in-place ou substituídos pela augmentation.
+        #    Estes são os tensores "DEPOIS".
         if self.transform:
-            # A lógica de transformação precisaria lidar com ambos os tensores
-            # (ex: um flip horizontal deve ser aplicado a ambos)
-            pass
+            rgb_tensor, flow_tensor = self.transform(rgb_tensor, flow_tensor)
 
-        return rgb_tensor, flow_tensor, torch.tensor(label)
+        # 3. Retorna ambos os conjuntos
+        return rgb_before, flow_before, rgb_tensor, flow_tensor, torch.tensor(label)
 
 
 if __name__ == '__main__':
