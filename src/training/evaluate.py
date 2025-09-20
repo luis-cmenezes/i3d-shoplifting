@@ -1,16 +1,14 @@
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, Dataset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from tqdm import tqdm
 from pathlib import Path
 import numpy as np
-import os
 import cv2
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Importa as classes que criamos
 from src.models.i3d_pytorch import InceptionI3d
 from src.common.dataset import ShopliftingDataset
 
@@ -18,32 +16,51 @@ from src.common.dataset import ShopliftingDataset
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Caminhos para os dados
+# Caminhos dos dados
 RGB_DIR = PROJECT_ROOT / 'data' / 'i3d_inputs' / 'rgb'
 FLOW_DIR = PROJECT_ROOT / 'data' / 'i3d_inputs' / 'optical_flow'
 
 # --- IMPORTANTE: ATUALIZE ESTE CAMINHO ---
-# Aponte para o seu melhor checkpoint salvo pelo script de treinamento
-CHECKPOINT_PATH = PROJECT_ROOT / 'checkpoints' / 'shoplifting-training' / 'epoch_40_recall_0.8286.pt' 
-OUTPUT_DIR = PROJECT_ROOT / 'outputs' / 'evaluation_results'
+TRAINING = 'new_changes_data_aug'
+CHECKPOINT_FILENAME = 'epoch_032_recall_0.8286.pt'
 
-SEED = 42 # Deve ser o MESMO usado no treinamento para garantir o mesmo split
+CHECKPOINT_PARENT_DIR = PROJECT_ROOT / 'checkpoints' / TRAINING / 'model_weights'
+CHECKPOINT_PATH = CHECKPOINT_PARENT_DIR / CHECKPOINT_FILENAME
 
-def load_models_from_checkpoint(checkpoint_path, num_classes=2):
-    """Carrega os modelos RGB e de Fluxo a partir de um único arquivo de checkpoint."""
-    model_rgb = InceptionI3d(num_classes=num_classes, in_channels=3)
-    model_flow = InceptionI3d(num_classes=num_classes, in_channels=2)
+# Saídas
+OUTPUT_DIR = PROJECT_ROOT / 'evaluation_results' / CHECKPOINT_FILENAME.replace('.pt', '')
+OUTPUT_DIR_VIDEOS = OUTPUT_DIR / 'videos'
+
+# Seed DEVE ser 42 para replicar o split do script de treino
+SEED = 42
+NUM_CLASSES_MODEL = 1 # Nosso modelo foi treinado com 1 saída para BCE Loss
+
+def load_models_from_checkpoint(checkpoint_path, num_classes_output):
+    """Carrega os modelos RGB e de Fluxo a partir do nosso checkpoint de treino."""
+    
+    # 1. Inicializa a arquitetura base (pré-treinada no Kinetics-400)
+    model_rgb = InceptionI3d(num_classes=400, in_channels=3)
+    model_flow = InceptionI3d(num_classes=400, in_channels=2)
+    
+    # 2. Substitui os logits para corresponder à NOSSA tarefa (1 saída)
+    #    Isso é crucial para que a arquitetura do modelo corresponda às chaves do state_dict
+    model_rgb.replace_logits(num_classes_output)
+    model_flow.replace_logits(num_classes_output)
 
     try:
+        print(f"Carregando checkpoint de: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+        
         model_rgb.load_state_dict(checkpoint['model_rgb_state_dict'])
         model_flow.load_state_dict(checkpoint['model_flow_state_dict'])
-        print(f"Modelos carregados com sucesso do checkpoint da época {checkpoint.get('epoch', 'N/A')}")
+        print(f"Modelos carregados com sucesso! Checkpoint da época {checkpoint.get('epoch', 'N/A')+1} (Recall: {checkpoint.get('recall', 'N/A'):.4f})")
+    
     except FileNotFoundError:
         print(f"ERRO: Checkpoint não encontrado em '{checkpoint_path}'. Abortando.")
         return None, None
     except Exception as e:
         print(f"ERRO ao carregar o checkpoint: {e}")
+        print("Certifique-se de que NUM_CLASSES_MODEL está correto (deve ser 1).")
         return None, None
         
     model_rgb.to(DEVICE)
@@ -53,116 +70,147 @@ def load_models_from_checkpoint(checkpoint_path, num_classes=2):
     
     return model_rgb, model_flow
 
+def plot_confusion_matrix(cm, class_map, save_path):
+    """Salva a imagem da matriz de confusão a partir de uma matriz cm calculada."""
+    print("\nGerando imagem da Matriz de Confusão...")
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=class_map.values(), 
+                yticklabels=class_map.values())
+    plt.xlabel('Previsto pelo Modelo')
+    plt.ylabel('Rótulo Real')
+    plt.title('Matriz de Confusão no Conjunto de Teste')
+    
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Imagem da Matriz de Confusão salva em: {save_path}")
+
 def evaluate():
     """Função principal que orquestra a avaliação no conjunto de teste."""
     print(f"Usando dispositivo: {DEVICE}")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR_VIDEOS.mkdir(parents=True, exist_ok=True)
+    print(f"Resultados (vídeos e métricas) serão salvos em: {OUTPUT_DIR}")
 
-    # --- 2. REPRODUÇÃO DO SPLIT DE TESTE ---
-    full_dataset = ShopliftingDataset(rgb_dir=RGB_DIR, flow_dir=FLOW_DIR)
+    # --- 2. REPRODUÇÃO EXATA DO SPLIT DE TESTE (do train.py) ---
+    full_dataset = ShopliftingDataset(rgb_dir=RGB_DIR, flow_dir=FLOW_DIR, transform=None)
     indices = list(range(len(full_dataset)))
     labels = [full_dataset.get_label(idx) for idx in indices]
 
-    # Usa o mesmo random_state para garantir que os splits sejam idênticos
-    _, temp_indices, _, temp_labels = train_test_split(
+    train_indices, temp_indices, _, temp_labels = train_test_split(
         indices, labels, test_size=0.3, random_state=SEED, stratify=labels)
-    _, test_indices, _, test_labels = train_test_split(
+    val_indices, test_indices, _, _ = train_test_split(
         temp_indices, temp_labels, test_size=0.5, random_state=SEED, stratify=temp_labels)
 
     test_dataset = Subset(full_dataset, test_indices)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False) # Batch size 1 para visualização
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    print(f"Conjunto de teste (15%) carregado com {len(test_dataset)} amostras.")
 
-    print(f"Conjunto de teste carregado com {len(test_dataset)} amostras.")
-
-    # # --- 3. CARREGAMENTO DO MODELO TREINADO ---
-    model_rgb, model_flow = load_models_from_checkpoint(CHECKPOINT_PATH)
+    # --- 3. CARREGAMENTO DO MODELO TREINADO ---
+    model_rgb, model_flow = load_models_from_checkpoint(CHECKPOINT_PATH, NUM_CLASSES_MODEL)
     if model_rgb is None:
         return
 
-    # # --- 4. AVALIAÇÃO E VISUALIZAÇÃO ---
+    # --- 4. AVALIAÇÃO E GERAÇÃO DE VÍDEO ---
     all_preds = []
     all_labels = []
+    all_probs = []
 
     class_map = {0: "Normal", 1: "Shoplifting"}
-    color_map = {True: (0, 255, 0), False: (0, 0, 255)} # Verde para correto, Vermelho para incorreto
+    color_map = {"correto": (0, 255, 0), "incorreto": (0, 0, 255), "texto_overlay": (255, 220, 100)}
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.5
+    line_type = 2
 
     with torch.no_grad():
-        for i, (rgb_data, flow_data, label) in enumerate(tqdm(test_loader, desc="Avaliando no Teste")):
-
+        for i, (rgb_before, flow_before, rgb_after, flow_after, label) in enumerate(tqdm(test_loader, desc="Avaliando no Teste")):
             original_dataset_index = test_indices[i]
             block_name = full_dataset.samples[original_dataset_index]
-
-            rgb_data, flow_data, label = rgb_data.to(DEVICE), flow_data.to(DEVICE), label.to(DEVICE)
+            rgb_data, flow_data = rgb_after.to(DEVICE), flow_after.to(DEVICE)
             
-            # Inferência
-            rgb_logits = torch.mean(model_rgb(rgb_data), dim=2)
-            flow_logits = torch.mean(model_flow(flow_data), dim=2)
-            final_logits = (rgb_logits + flow_logits) / 2
-            
-            pred_prob = torch.softmax(final_logits, dim=1)
-            pred_class = torch.argmax(pred_prob, dim=1)
+            rgb_logits = model_rgb(rgb_data)
+            flow_logits = model_flow(flow_data)
+            final_logits = (rgb_logits + flow_logits) / 2 
+            pred_prob = torch.sigmoid(final_logits) 
+            pred_class_tensor = (pred_prob > 0.5).long()
             
             true_label = label.item()
-            predicted_label = pred_class.item()
+            predicted_label = pred_class_tensor.item()
+            probability_score = pred_prob.item() 
             
             all_preds.append(predicted_label)
             all_labels.append(true_label)
+            all_probs.append(probability_score)
             
-            # --- 5. OUTPUT VISUAL ---
+            # --- 5. Geração do Vídeo de Output ---
             is_correct = (predicted_label == true_label)
             result_prefix = "CORRETO" if is_correct else "INCORRETO"
             video_filename = f"{result_prefix}_{block_name}.mp4"
-            video_save_path = OUTPUT_DIR / video_filename
+            video_save_path = OUTPUT_DIR_VIDEOS / video_filename
 
-            display_tensor = rgb_data.squeeze(0).permute(1, 2, 3, 0) 
+            display_tensor = rgb_before.squeeze(0).permute(1, 2, 3, 0) 
             display_numpy = (display_tensor.cpu().numpy() * 255).astype(np.uint8)
-
-            height, width, _ = display_numpy[0].shape
+            H, W, _ = display_numpy[0].shape 
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            video_writer = cv2.VideoWriter(str(video_save_path), fourcc, 25.0, (1280, 720))
+            video_writer = cv2.VideoWriter(str(video_save_path), fourcc, 10.0, (W, H))
 
             text_true = f"Real: {class_map[true_label]}"
-            text_pred = f"Previsto: {class_map[predicted_label]} ({pred_prob[0][predicted_label]:.2f})"
+            prob_display = probability_score if predicted_label == 1 else (1.0 - probability_score)
+            text_pred = f"Previsto: {class_map[predicted_label]} ({prob_display:.2f})"
+            text_color = color_map["correto"] if is_correct else color_map["incorreto"]
 
             for frame_numpy in display_numpy:
-                # Converte de RGB (PyTorch) para BGR (OpenCV) para exibição correta das cores
-                display_frame = cv2.resize(cv2.cvtColor(frame_numpy, cv2.COLOR_RGB2BGR), (1280,720))
-                
-                cv2.putText(display_frame, text_true, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
-                cv2.putText(display_frame, text_pred, (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color_map[is_correct], 2)
-                video_writer.write(display_frame)
-                
+                display_frame_bgr = cv2.cvtColor(frame_numpy, cv2.COLOR_RGB2BGR)
+                cv2.putText(display_frame_bgr, text_true, (5, H - 25), font, font_scale, color_map["texto_overlay"], line_type)
+                cv2.putText(display_frame_bgr, text_pred, (5, H - 10), font, font_scale, text_color, line_type)
+                video_writer.write(display_frame_bgr)
             video_writer.release()
                 
-    # --- 6. MÉTRICAS FINAIS ---
+    # --- 6. MÉTRICAS FINAIS (COM ARQUIVO DE RELATÓRIO) ---
     print("\n--- Relatório Final de Métricas no Conjunto de Teste ---")
     
     accuracy = accuracy_score(all_labels, all_preds)
     precision = precision_score(all_labels, all_preds, zero_division=0)
     recall = recall_score(all_labels, all_preds, zero_division=0)
     f1 = f1_score(all_labels, all_preds, zero_division=0)
-    
+    cm = confusion_matrix(all_labels, all_preds) # Calcula a Matriz de Confusão
+
+    # Imprime no console
+    print(f"Total de Amostras de Teste: {len(all_labels)}")
     print(f"Acurácia: {accuracy:.4f}")
-    print(f"Precisão: {precision:.4f}")
-    print(f"Revocação (Recall): {recall:.4f}")
-    print(f"F1-Score: {f1:.4f}")
-    
-    print("\nMatriz de Confusão:")
-    cm = confusion_matrix(all_labels, all_preds)
+    print(f"Precisão (p/ Shoplifting): {precision:.4f}")
+    print(f"Revocação (Recall p/ Shoplifting): {recall:.4f}")
+    print(f"F1-Score (p/ Shoplifting): {f1:.4f}")
+    print("\nMatriz de Confusão (Linha=Real, Coluna=Previsto):")
     print(cm)
 
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                xticklabels=class_map.values(), 
-                yticklabels=class_map.values())
-    plt.xlabel('Previsto')
-    plt.ylabel('Real')
-    plt.title('Matriz de Confusão no Conjunto de Teste')
-    
-    confusion_matrix_path = OUTPUT_DIR / 'confusion_matrix.png'
-    plt.savefig(confusion_matrix_path)
-    plt.close()
-    print(f"\nImagem da Matriz de Confusão salva em: {confusion_matrix_path}")
+    # --- NOVO: Salva o relatório de métricas em um arquivo .txt ---
+    metrics_file_path = OUTPUT_DIR / 'teste_report_metrics.txt'
+    try:
+        with open(metrics_file_path, 'w') as f:
+            f.write("--- Relatório Final de Métricas no Conjunto de Teste ---\n")
+            f.write(f"Checkpoint Avaliado: {CHECKPOINT_FILENAME}\n")
+            f.write(f"Total de Amostras de Teste: {len(all_labels)}\n\n")
+            f.write(f"Acurácia: {accuracy:.4f}\n")
+            f.write(f"Precisão (Classe 1 - Shoplifting): {precision:.4f}\n")
+            f.write(f"Revocação (Recall Classe 1 - Shoplifting): {recall:.4f}\n")
+            f.write(f"F1-Score (Classe 1 - Shoplifting): {f1:.4f}\n\n")
+            f.write("--- Matriz de Confusão ---\n")
+            f.write(f"Classes (na ordem): {list(class_map.values())}\n")
+            f.write(f"(Linhas = Real, Colunas = Previsto)\n")
+            f.write(np.array2string(cm))
+            f.write("\n\nLegenda da Matriz:\n")
+            f.write("[[Verdadeiro Normal,   Falso Shoplifting],\n")
+            f.write(" [Falso Normal,        Verdadeiro Shoplifting]]\n")
+        
+        print(f"\nRelatório de métricas salvo com sucesso em: {metrics_file_path}")
+    except Exception as e:
+        print(f"ERRO ao salvar arquivo de métricas: {e}")
+    # ----------------------------------------------------
+
+    # Salva a imagem da Matriz de Confusão (passando a 'cm' calculada)
+    matrix_plot_path = OUTPUT_DIR / 'teste_confusion_matrix.png'
+    plot_confusion_matrix(cm, class_map, matrix_plot_path)
 
 if __name__ == '__main__':
     evaluate()
