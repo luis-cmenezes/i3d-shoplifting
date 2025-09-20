@@ -88,26 +88,23 @@ class InceptionI3d(nn.Module):
             InceptionModule(832, [384, 192, 384, 48, 128, 128])
 
         self.avg_pool = \
-             nn.AvgPool3d(kernel_size=(2, 7, 7), stride=1)
+             nn.AdaptiveAvgPool3d((1, 1, 1))
         self.dropout = \
              nn.Dropout(0.5)
         
         # A camada final de classificação (logits).
         # É esta camada que vamos substituir para o fine-tuning.
-        self.logits = Unit3D(in_channels=1024, output_channels=num_classes,
-                             kernel_size=(1, 1, 1),
-                             use_batch_norm=False,
-                             use_relu=False,
-                             use_bias=True)
+        self.logits = nn.Conv3d(1024, 1, kernel_size=(1, 1, 1), stride=1, bias=True)
+        self.num_classes = num_classes
 
     def replace_logits(self, num_classes):
-        """Função auxiliar para substituir a camada de classificação."""
-        print(f"Substituindo a camada de classificação final. Nova quantidade de classes: {num_classes}")
-        self.logits = Unit3D(in_channels=1024, output_channels=num_classes,
-                             kernel_size=(1, 1, 1),
-                             use_batch_norm=False,
-                             use_relu=False,
-                             use_bias=True)
+        """Substitui a camada de classificação final. Para o modelo de saída única,
+        garante que a saída seja 1."""
+        if num_classes != 1:
+            print(f"AVISO: Para a classificação binária com Sigmoid, 'num_classes' deveria ser 1. Ajustando...")
+        
+        self.num_classes = 1
+        self.logits = nn.Conv3d(1024, self.num_classes, kernel_size=(1, 1, 1), stride=1, bias=True)
     
     def forward(self, x):
         # Forward pass através da rede
@@ -131,6 +128,6 @@ class InceptionI3d(nn.Module):
         x = self.dropout(x)
         x = self.logits(x)
         
-        # O formato da saída do logits é (batch_size, num_classes, 1, 1, 1)
-        # Removemos as dimensões extras para ter (batch_size, num_classes)
-        return x.squeeze(3).squeeze(3).squeeze(2)
+        # O formato da saída do logits é (batch_size, 1, 1, 1, 1)
+        # Removemos as dimensões extras para ter (batch_size, 1), que é o esperado pela BCEWithLogitsLoss
+        return x.squeeze(-1).squeeze(-1).squeeze(-1)
