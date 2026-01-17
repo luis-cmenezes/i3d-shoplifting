@@ -6,11 +6,12 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_curve, auc
 from tqdm import tqdm
 from pathlib import Path
-import os, re, csv
+import os
+import re
+import csv
 import numpy as np
 import cv2
 import random
-from pathlib import Path
 
 # Importa as classes que criamos
 from src.models.i3d_pytorch import InceptionI3d
@@ -33,7 +34,7 @@ RGB_CHECKPOINT = PROJECT_ROOT / 'checkpoints' / 'pretrained' /'rgb_imagenet.pt'
 FLOW_CHECKPOINT = PROJECT_ROOT / 'checkpoints' / 'pretrained' /'flow_imagenet.pt'
 
 # --- ESTRUTURA DE SAÍDA REFINADA ---
-BASE_OUTPUT_DIR = PROJECT_ROOT / 'checkpoints' / TEST_NAME
+BASE_OUTPUT_DIR = PROJECT_ROOT / 'AAAAAAA' / TEST_NAME
 CHECKPOINT_SAVE_DIR = BASE_OUTPUT_DIR / 'model_weights'
 VISUALIZATION_DIR = BASE_OUTPUT_DIR / 'input_visualizations'
 ROC_CURVE_DIR = BASE_OUTPUT_DIR / 'roc_curves'

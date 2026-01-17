@@ -6,10 +6,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import fbeta_score, precision_recall_fscore_support
 from tqdm import tqdm
 from pathlib import Path
-import os, re
+import os
+import re
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 # Importa as classes necessárias do seu projeto
 from src.models.i3d_pytorch import InceptionI3d

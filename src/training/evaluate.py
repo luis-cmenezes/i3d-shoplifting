@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader, Subset, Dataset
+from torch.utils.data import DataLoader, Subset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from tqdm import tqdm
@@ -197,7 +197,7 @@ def evaluate():
             f.write(f"F1-Score (Classe 1 - Shoplifting): {f1:.4f}\n\n")
             f.write("--- Matriz de Confusão ---\n")
             f.write(f"Classes (na ordem): {list(class_map.values())}\n")
-            f.write(f"(Linhas = Real, Colunas = Previsto)\n")
+            f.write("(Linhas = Real, Colunas = Previsto)\n")
             f.write(np.array2string(cm))
             f.write("\n\nLegenda da Matriz:\n")
             f.write("[[Verdadeiro Normal,   Falso Shoplifting],\n")
