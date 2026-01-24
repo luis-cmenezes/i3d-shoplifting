@@ -13,9 +13,6 @@ Projeto para fine-tuning do modelo **I3D (Inflated 3D ConvNet)** como classifica
   - RGB: 64 frames reamostrados/recortados para 224×224
   - Optical Flow: TV-L1 denso, armazenado como imagens `flow_x_*.jpg` e `flow_y_*.jpg`
 - Treina (fine-tune) um I3D para **classificação binária** com `BCEWithLogitsLoss` e `pos_weight` (para lidar com desbalanceamento).
-- Disponibiliza inferência simples em:
-  - um vídeo (amostragem uniforme de 64 frames)
-  - um diretório de frames já no formato do I3D
 
 ### Estrutura de pastas (visão rápida)
 
