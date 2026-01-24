@@ -1,6 +1,9 @@
 import os
 import re
 import subprocess
+import argparse
+import yaml
+from pathlib import Path
 from tqdm import tqdm
 
 def get_next_start_index(output_dir, prefix="Shoplifting_"):
@@ -98,17 +101,72 @@ def augment_with_new_videos(new_videos_dir, output_blocks_dir, string_to_look_fo
     print("Todos os novos vídeos foram processados e adicionados ao diretório de blocos.")
 
 
-if __name__ == '__main__':
-    # --- CONFIGURE OS CAMINHOS AQUI ---
+def main_extract_others(input_dir, output_dir, dataset_type='Normal'):
+    """
+    Função principal parametrizada para extração de outros datasets.
     
-    # 1. O diretório que contém os novos vídeos curtos de shoplifting
-    NEW_VIDEOS_INPUT_DIR = '/home/luis/tcc/datasets/Shoplifting Dataset 2.0/see and let'
-    
-    # 2. O diretório de saída principal, o mesmo usado no script anterior
-    #    (ex: 'data_blocks_with_context')
-    OUTPUT_BLOCKS_DIR = '/home/luis/tcc/code/preprocessed/event_blocks_frames'
-    
-    DATASET_TYPE = 'Normal'
-    # -----------------------------------
+    Args:
+        input_dir: Diretório com vídeos de entrada
+        output_dir: Diretório de saída para blocos
+        dataset_type: Tipo do dataset ('Normal' ou 'Shoplifting')
+    """
+    augment_with_new_videos(input_dir, output_dir, dataset_type)
+    print(f" Extração concluída! Blocos salvos em: {output_dir}")
+    return True
 
-    augment_with_new_videos(NEW_VIDEOS_INPUT_DIR, OUTPUT_BLOCKS_DIR, DATASET_TYPE)
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Extrai frames de vídeos individuais")
+    parser.add_argument(
+        "--input-dir",
+        type=str,
+        help="Diretório com vídeos de entrada"
+    )
+    parser.add_argument(
+        "--output-dir", 
+        type=str,
+        help="Diretório de saída para blocos"
+    )
+    parser.add_argument(
+        "--dataset-type",
+        choices=['Normal', 'Shoplifting'],
+        default='Normal',
+        help="Tipo do dataset (Normal ou Shoplifting)"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Arquivo de configuração YAML (opcional)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Se config foi fornecido, carrega valores padrão
+    if args.config and Path(args.config).exists():
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Valores padrão baseados na config
+        default_output = str(Path(config.get('models', {}).get('i3d', {}).get('data_dir', '')) / "event_blocks_frames")
+        
+        input_dir = args.input_dir
+        output_dir = args.output_dir or default_output
+        dataset_type = args.dataset_type
+    else:
+        if not all([args.input_dir, args.output_dir]):
+            print(" Argumentos --input-dir e --output-dir são obrigatórios")
+            exit(1)
+        
+        input_dir = args.input_dir
+        output_dir = args.output_dir
+        dataset_type = args.dataset_type
+    
+    # Verifica se diretório de entrada existe
+    if not Path(input_dir).exists():
+        print(f" Diretório de entrada não encontrado: {input_dir}")
+        exit(1)
+    
+    # Cria diretório de saída
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    success = main_extract_others(input_dir, output_dir, dataset_type)
+    exit(0 if success else 1)

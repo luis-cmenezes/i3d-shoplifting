@@ -5,6 +5,7 @@ import random
 from tqdm import tqdm
 import shutil
 import argparse
+import yaml
 from pathlib import Path
 
 def process_frame_for_i3d(frame_path, output_size=224):
@@ -147,10 +148,31 @@ if __name__ == '__main__':
         action="store_true",
         help="Se setado, apaga o diretório de saída antes de gerar novamente.",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Arquivo de configuração YAML (opcional)",
+    )
+    args = parser.parse_args()
+    
+    # Se config foi fornecido, carrega configurações de lá
+    if args.config and Path(args.config).exists():
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Use configurações do arquivo se argumentos não foram fornecidos
+        source_blocks_dir = args.source_blocks_dir or str(Path(config.get('models', {}).get('i3d', {}).get('data_dir', '')) / "event_blocks_frames")
+        output_rgb_dir = args.output_rgb_dir or str(Path(config.get('models', {}).get('i3d', {}).get('data_dir', '')) / "i3d_inputs" / "rgb")
+        num_frames = args.num_frames or config.get('preprocessing', {}).get('i3d', {}).get('num_frames', 64)
+    else:
+        source_blocks_dir = args.source_blocks_dir
+        output_rgb_dir = args.output_rgb_dir
+        num_frames = args.num_frames
+    
     args = parser.parse_args()
 
-    if args.overwrite and os.path.exists(args.output_rgb_dir):
-        print(f"Aviso: Limpando diretório de saída '{args.output_rgb_dir}' (--overwrite).")
-        shutil.rmtree(args.output_rgb_dir)
+    if args.overwrite and os.path.exists(output_rgb_dir):
+        print(f"Aviso: Limpando diretório de saída '{output_rgb_dir}' (--overwrite).")
+        shutil.rmtree(output_rgb_dir)
 
-    main(args.source_blocks_dir, args.output_rgb_dir)
+    main(source_blocks_dir, output_rgb_dir)
