@@ -167,3 +167,5 @@ uv run python src/training/train.py --model-mode rgb_only --unfreeze-full-model 
 
 - Labels são inferidos pelo nome da pasta: se contiver `Shoplifting` → label=1, caso contrário label=0.
 - Para `rgb_optical`, o checkpoint precisa conter também `model_flow_state_dict`.
+
+testing
