@@ -4,6 +4,8 @@ import numpy as np
 from tqdm import tqdm
 import shutil
 from natsort import natsorted
+import argparse
+from pathlib import Path
 
 def generate_flow_for_block(source_block_path, output_block_path):
     """
@@ -74,9 +76,6 @@ def main(source_rgb_dir, output_flow_dir):
     Função principal para orquestrar a geração de fluxo ótico.
     """
     print("--- INICIANDO GERAÇÃO DE INPUT DE FLUXO ÓTICO PARA O MODELO I3D ---")
-    if os.path.exists(output_flow_dir):
-        print(f"Aviso: O diretório de saída '{output_flow_dir}' já existe. Ele será limpo antes de começar.")
-        shutil.rmtree(output_flow_dir)
     os.makedirs(output_flow_dir, exist_ok=True)
 
     try:
@@ -99,14 +98,30 @@ def main(source_rgb_dir, output_flow_dir):
     print(f"Os inputs de fluxo ótico foram gerados com sucesso em: '{os.path.abspath(output_flow_dir)}'")
 
 if __name__ == '__main__':
-    # --- CONFIGURE OS CAMINHOS AQUI ---
-    
-    # 1. O diretório que contém o input RGB já amostrado e processado
-    SOURCE_RGB_DIR = '/home/luis/tcc/code/preprocessed/i3d_inputs/rgb'
-    
-    # 2. O diretório de saída onde o input de fluxo ótico será salvo
-    OUTPUT_FLOW_DIR = '/home/luis/tcc/code/preprocessed/i3d_inputs/optical_flow'
-    
-    # -----------------------------------
+    project_root = Path(__file__).resolve().parent.parent.parent
 
-    main(SOURCE_RGB_DIR, OUTPUT_FLOW_DIR)
+    parser = argparse.ArgumentParser(description="Gera inputs de fluxo ótico (I3D) a partir dos inputs RGB.")
+    parser.add_argument(
+        "--source-rgb-dir",
+        type=str,
+        default=str(project_root / "data" / "i3d_inputs" / "rgb"),
+        help="Diretório com inputs RGB já processados (64 frames 224x224).",
+    )
+    parser.add_argument(
+        "--output-flow-dir",
+        type=str,
+        default=str(project_root / "data" / "i3d_inputs" / "optical_flow"),
+        help="Diretório de saída para os inputs de fluxo ótico.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Se setado, apaga o diretório de saída antes de gerar novamente.",
+    )
+    args = parser.parse_args()
+
+    if args.overwrite and os.path.exists(args.output_flow_dir):
+        print(f"Aviso: Limpando diretório de saída '{args.output_flow_dir}' (--overwrite).")
+        shutil.rmtree(args.output_flow_dir)
+
+    main(args.source_rgb_dir, args.output_flow_dir)

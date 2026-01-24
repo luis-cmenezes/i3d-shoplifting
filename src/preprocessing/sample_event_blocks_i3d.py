@@ -4,6 +4,8 @@ import numpy as np
 import random
 from tqdm import tqdm
 import shutil
+import argparse
+from pathlib import Path
 
 def process_frame_for_i3d(frame_path, output_size=224):
     """
@@ -97,9 +99,6 @@ def main(source_blocks_dir, output_rgb_dir):
     Função principal para orquestrar o processo de amostragem e processamento.
     """
     print("--- INICIANDO GERAÇÃO DE INPUT RGB PARA O MODELO I3D ---")
-    if os.path.exists(output_rgb_dir):
-        print(f"Aviso: O diretório de saída '{output_rgb_dir}' já existe. Ele será limpo antes de começar.")
-        shutil.rmtree(output_rgb_dir)
     os.makedirs(output_rgb_dir, exist_ok=True)
     
     try:
@@ -122,14 +121,36 @@ def main(source_blocks_dir, output_rgb_dir):
 
 
 if __name__ == '__main__':
-    # --- CONFIGURE OS CAMINHOS AQUI ---
-    
-    # 1. O diretório que contém as pastas de blocos de eventos (ex: Normal_0, Shoplifting_0)
-    SOURCE_BLOCKS_DIR = '/home/luis/tcc/code/preprocessed/event_blocks_frames'
-    
-    # 2. O diretório de saída onde o input final para o modelo será salvo
-    OUTPUT_I3D_INPUT_DIR = '/home/luis/tcc/code/preprocessed/i3d_inputs'
-    
-    # -----------------------------------
+    project_root = Path(__file__).resolve().parent.parent.parent
 
-    main(SOURCE_BLOCKS_DIR, OUTPUT_I3D_INPUT_DIR)
+    parser = argparse.ArgumentParser(description="Gera inputs RGB (I3D) a partir de blocos de frames.")
+    parser.add_argument(
+        "--source-blocks-dir",
+        type=str,
+        default=str(project_root / "data" / "event_blocks_frames"),
+        help="Diretório com blocos de frames brutos (Normal_x, Shoplifting_x).",
+    )
+    parser.add_argument(
+        "--output-rgb-dir",
+        type=str,
+        default=str(project_root / "data" / "i3d_inputs" / "rgb"),
+        help="Diretório de saída para os inputs RGB do I3D.",
+    )
+    parser.add_argument(
+        "--num-frames",
+        type=int,
+        default=64,
+        help="Número de frames por bloco (I3D usa 64).",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Se setado, apaga o diretório de saída antes de gerar novamente.",
+    )
+    args = parser.parse_args()
+
+    if args.overwrite and os.path.exists(args.output_rgb_dir):
+        print(f"Aviso: Limpando diretório de saída '{args.output_rgb_dir}' (--overwrite).")
+        shutil.rmtree(args.output_rgb_dir)
+
+    main(args.source_blocks_dir, args.output_rgb_dir)

@@ -12,6 +12,7 @@ import csv
 import numpy as np
 import cv2
 import random
+import argparse
 
 # Importa as classes que criamos
 from src.models.i3d_pytorch import InceptionI3d
@@ -21,35 +22,91 @@ from src.common.dataset import ShopliftingDataset, VideoAugmentation
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Flag para controlar o modo do modelo. Opções: 'rgb_optical', 'rgb_only'
-MODEL_MODE = 'rgb_optical' 
-# Flag para descongelar todos os pesos do modelo para um fine-tuning completo
-UNFREEZE_FULL_MODEL = True
-TEST_NAME = f'aug_{"full_unfreeze" if UNFREEZE_FULL_MODEL else "head_unfreeze"}_{MODEL_MODE}'
+def parse_args():
+    parser = argparse.ArgumentParser(description="Fine-tuning do I3D para classificação binária de Shoplifting")
+    parser.add_argument(
+        "--model-mode",
+        default="rgb_optical",
+        choices=["rgb_optical", "rgb_only"],
+        help="Modo do modelo: usa RGB+Fluxo Ótico (late fusion) ou somente RGB.",
+    )
+    parser.add_argument(
+        "--unfreeze-full-model",
+        action="store_true",
+        help="Se setado, faz fine-tuning completo (descongela todas as camadas).",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=70,
+        help="Número de épocas.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Batch size.",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=1e-3,
+        help="Learning rate.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed para splits e amostragem de steps para visualização.",
+    )
+    parser.add_argument(
+        "--rgb-dir",
+        type=str,
+        default=str(PROJECT_ROOT / "data" / "i3d_inputs" / "rgb"),
+        help="Diretório com inputs RGB (blocos com 64 frames).",
+    )
+    parser.add_argument(
+        "--flow-dir",
+        type=str,
+        default=str(PROJECT_ROOT / "data" / "i3d_inputs" / "optical_flow"),
+        help="Diretório com inputs de fluxo ótico (blocos).",
+    )
+    parser.add_argument(
+        "--rgb-checkpoint",
+        type=str,
+        default=str(PROJECT_ROOT / "checkpoints" / "pretrained" / "rgb_imagenet.pt"),
+        help="Checkpoint pré-treinado (RGB).",
+    )
+    parser.add_argument(
+        "--flow-checkpoint",
+        type=str,
+        default=str(PROJECT_ROOT / "checkpoints" / "pretrained" / "flow_imagenet.pt"),
+        help="Checkpoint pré-treinado (fluxo ótico).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=str(PROJECT_ROOT / "checkpoints" / "experiments_i3d"),
+        help="Diretório base para salvar experimentos.",
+    )
+    parser.add_argument(
+        "--steps-to-visualize-per-epoch",
+        type=int,
+        default=2,
+        help="Quantos batches aleatórios por época salvar em vídeo (RGB before/after).",
+    )
+    return parser.parse_args()
 
-# Caminhos para os dados e checkpoints
-RGB_DIR = PROJECT_ROOT / 'data' / 'i3d_inputs' / 'rgb'
-FLOW_DIR = PROJECT_ROOT / 'data' / 'i3d_inputs' / 'optical_flow'
-RGB_CHECKPOINT = PROJECT_ROOT / 'checkpoints' / 'pretrained' /'rgb_imagenet.pt'
-FLOW_CHECKPOINT = PROJECT_ROOT / 'checkpoints' / 'pretrained' /'flow_imagenet.pt'
 
-# --- ESTRUTURA DE SAÍDA REFINADA ---
-BASE_OUTPUT_DIR = PROJECT_ROOT / 'AAAAAAA' / TEST_NAME
-CHECKPOINT_SAVE_DIR = BASE_OUTPUT_DIR / 'model_weights'
-VISUALIZATION_DIR = BASE_OUTPUT_DIR / 'input_visualizations'
-ROC_CURVE_DIR = BASE_OUTPUT_DIR / 'roc_curves'
-LOG_FILE_PATH = BASE_OUTPUT_DIR / 'training_log.csv'
+def seed_everything(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
-CHECKPOINT_SAVE_DIR.mkdir(parents=True, exist_ok=True)
-VISUALIZATION_DIR.mkdir(parents=True, exist_ok=True)
-ROC_CURVE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Hiperparâmetros de treinamento
-LEARNING_RATE = 1e-3
-BATCH_SIZE = 1
-EPOCHS = 70
 NUM_CLASSES = 1 # A saída única representa a probabilidade de ser Shoplifting
-STEPS_TO_VISUALIZE_PER_EPOCH = 2
 
 def save_video_comparison(rgb_before_batch, rgb_after_batch, label_batch, output_path, fps=10):
     """
@@ -176,10 +233,10 @@ def manage_top_checkpoints(checkpoint_dir, current_auc_roc, epoch, model_rgb, mo
             print(f"Removendo o pior checkpoint antigo: '{existing_checkpoints[0][1]}'")
             os.remove(worst_checkpoint_path)
 
-def log_metrics(epoch, train_loss, val_metrics):
-    """Salva as métricas da época no arquivo CSV global 'LOG_FILE_PATH'."""
-    file_exists = os.path.isfile(LOG_FILE_PATH)
-    with open(LOG_FILE_PATH, 'a', newline='') as csvfile:
+def log_metrics(epoch, train_loss, val_metrics, log_file_path: Path):
+    """Salva as métricas da época no arquivo CSV indicado por `log_file_path`."""
+    file_exists = os.path.isfile(log_file_path)
+    with open(log_file_path, 'a', newline='') as csvfile:
         writer = csv.writer(csvfile)
         if not file_exists:
             writer.writerow(['epoch', 'train_loss', 'val_accuracy', 'val_precision', 'val_recall', 'val_f1', 'val_auc_roc'])
@@ -194,10 +251,32 @@ def log_metrics(epoch, train_loss, val_metrics):
             val_metrics['auc_roc']
         ])
 
-def train():
+def train(args):
     """Função principal que orquestra todo o processo de treinamento e visualização."""
+    seed_everything(args.seed)
+
+    model_mode = args.model_mode
+    unfreeze_full_model = args.unfreeze_full_model
+    test_name = f'aug_{"full_unfreeze" if unfreeze_full_model else "head_unfreeze"}_{model_mode}'
+
+    rgb_dir = Path(args.rgb_dir)
+    flow_dir = Path(args.flow_dir)
+    rgb_checkpoint = Path(args.rgb_checkpoint)
+    flow_checkpoint = Path(args.flow_checkpoint)
+
+    base_output_dir = Path(args.output_dir) / test_name
+    checkpoint_save_dir = base_output_dir / 'model_weights'
+    visualization_dir = base_output_dir / 'input_visualizations'
+    roc_curve_dir = base_output_dir / 'roc_curves'
+    log_file_path = base_output_dir / 'training_log.csv'
+
+    checkpoint_save_dir.mkdir(parents=True, exist_ok=True)
+    visualization_dir.mkdir(parents=True, exist_ok=True)
+    roc_curve_dir.mkdir(parents=True, exist_ok=True)
+
     print(f"Usando dispositivo: {DEVICE}")
-    print(f"Todos os outputs serão salvos em: {BASE_OUTPUT_DIR}")
+    print(f"Modo: {model_mode} | Fine-tuning completo: {unfreeze_full_model}")
+    print(f"Todos os outputs serão salvos em: {base_output_dir}")
 
     # --- 2. PREPARAÇÃO DO DATASET E DIVISÃO ---
     transform_train = VideoAugmentation(
@@ -205,8 +284,8 @@ def train():
         color_jitter_params=dict(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
     )
 
-    dataset_with_aug = ShopliftingDataset(rgb_dir=RGB_DIR, flow_dir=FLOW_DIR, transform=transform_train)
-    dataset_no_aug = ShopliftingDataset(rgb_dir=RGB_DIR, flow_dir=FLOW_DIR, transform=None)
+    dataset_with_aug = ShopliftingDataset(rgb_dir=rgb_dir, flow_dir=flow_dir, transform=transform_train)
+    dataset_no_aug = ShopliftingDataset(rgb_dir=rgb_dir, flow_dir=flow_dir, transform=None)
 
     indices = list(range(len(dataset_with_aug)))
     labels = [dataset_with_aug.get_label(idx) for idx in indices]
@@ -225,36 +304,36 @@ def train():
     print(f"Treino: {len(train_dataset)} amostras - {sum(train_labels)} Shoplifting | {len(train_labels) - sum(train_labels)} Normal")
     print(f"Validação: {len(val_dataset)} amostras - {sum(val_labels)} Shoplifting | {len(val_labels) - sum(val_labels)} Normal")
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
     # Seleciona os steps (índices de batch) que iremos salvar para visualização
     num_train_steps = len(train_loader)
     steps_to_visualize = random.sample(
-        range(num_train_steps), 
-        min(STEPS_TO_VISUALIZE_PER_EPOCH, num_train_steps) # Garante que não tentemos amostrar mais do que existe
+        range(num_train_steps),
+        min(args.steps_to_visualize_per_epoch, num_train_steps) # Garante que não tentemos amostrar mais do que existe
     )
     print(f"Visualizações de treino serão salvas nos steps (batches): {steps_to_visualize}")
 
     # --- 3. INICIALIZAÇÃO DO MODELO ---
     model_rgb = InceptionI3d(num_classes=400, in_channels=3)
-    load_pretrained_weights(model_rgb, RGB_CHECKPOINT)
+    load_pretrained_weights(model_rgb, rgb_checkpoint)
     model_rgb.replace_logits(NUM_CLASSES)
     model_rgb.to(DEVICE)
     
     model_flow = None
-    if MODEL_MODE == 'rgb_optical':
+    if model_mode == 'rgb_optical':
         model_flow = InceptionI3d(num_classes=400, in_channels=2)
-        load_pretrained_weights(model_flow, FLOW_CHECKPOINT)
+        load_pretrained_weights(model_flow, flow_checkpoint)
         model_flow.replace_logits(NUM_CLASSES)
         model_flow.to(DEVICE)
 
     # Lógica de congelamento/descongelamento baseada em Flag
-    if UNFREEZE_FULL_MODEL:
+    if unfreeze_full_model:
         print("Modo de Treino: Fine-tuning COMPLETO (todos os pesos descongelados).")
         for param in model_rgb.parameters():
             param.requires_grad = True
-        if MODEL_MODE == 'rgb_optical':
+        if model_mode == 'rgb_optical':
             for param in model_flow.parameters():
                 param.requires_grad = True
     else:
@@ -264,21 +343,21 @@ def train():
         for param in model_rgb.logits.parameters():
             param.requires_grad = True
         
-        if MODEL_MODE == 'rgb_optical':
+        if model_mode == 'rgb_optical':
             for param in model_flow.parameters():
                 param.requires_grad = False
             for param in model_flow.logits.parameters():
                 param.requires_grad = True
 
     model_rgb.to(DEVICE)
-    if MODEL_MODE == 'rgb_optical':
+    if model_mode == 'rgb_optical':
         model_flow.to(DEVICE)
 
     # --- 4. OTIMIZADOR E FUNÇÃO DE PERDA ---
     trainable_params = [p for p in model_rgb.parameters() if p.requires_grad]
-    if MODEL_MODE == 'rgb_optical':
+    if model_mode == 'rgb_optical':
         trainable_params.extend([p for p in model_flow.parameters() if p.requires_grad])
-    optimizer = optim.Adam(trainable_params, lr=LEARNING_RATE)
+    optimizer = optim.Adam(trainable_params, lr=args.learning_rate)
     
     # Calcula o peso para a classe positiva (Shoplifting) para a BCEWithLogitsLoss
     num_normal = len(train_labels) - sum(train_labels)
@@ -290,14 +369,14 @@ def train():
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # --- 5. LOOP DE TREINAMENTO E VALIDAÇÃO ---
-    for epoch in range(EPOCHS):
-        print(f"\n--- Epoch {epoch + 1}/{EPOCHS} ---")
+    for epoch in range(args.epochs):
+        print(f"\n--- Epoch {epoch + 1}/{args.epochs} ---")
         
-        epoch_viz_dir = VISUALIZATION_DIR / f'epoch_{epoch+1:03d}'
+        epoch_viz_dir = visualization_dir / f'epoch_{epoch+1:03d}'
         epoch_viz_dir.mkdir(exist_ok=True)
 
         model_rgb.train()
-        if MODEL_MODE == 'rgb_optical':
+        if model_mode == 'rgb_optical':
             model_flow.train()
 
         running_loss = 0.0
@@ -305,7 +384,7 @@ def train():
         for step_idx, (rgb_before, flow_before, rgb_after, flow_after, labels) in enumerate(tqdm(train_loader, desc="Treinando")):
             rgb_after, labels = rgb_after.to(DEVICE), labels.float().unsqueeze(1).to(DEVICE)
             
-            if MODEL_MODE == 'rgb_optical':
+            if model_mode == 'rgb_optical':
                 flow_after = flow_after.to(DEVICE)
             
             if step_idx in steps_to_visualize:
@@ -315,7 +394,7 @@ def train():
             optimizer.zero_grad()
             
             rgb_logits = model_rgb(rgb_after)
-            if MODEL_MODE == 'rgb_optical':
+            if model_mode == 'rgb_optical':
                 flow_logits = model_flow(flow_after)
                 final_logits = (rgb_logits + flow_logits) / 2
             else: # 'rgb_only'
@@ -331,18 +410,18 @@ def train():
 
         # Validação
         model_rgb.eval()
-        if MODEL_MODE == 'rgb_optical':
+        if model_mode == 'rgb_optical':
             model_flow.eval()
         all_preds, all_labels, all_probs = [], [], []
         
         with torch.no_grad():
             for rgb_before, flow_before, rgb_after, flow_after, labels in tqdm(val_loader, desc="Validando"):
                 rgb_after, labels = rgb_after.to(DEVICE), labels.to(DEVICE)
-                if MODEL_MODE == 'rgb_optical':
+                if model_mode == 'rgb_optical':
                     flow_after = flow_after.to(DEVICE)
                 
                 rgb_logits = model_rgb(rgb_after)
-                if MODEL_MODE == 'rgb_optical':
+                if model_mode == 'rgb_optical':
                     flow_logits = model_flow(flow_after)
                     final_logits = (rgb_logits + flow_logits) / 2
                 else: # 'rgb_only'
@@ -358,7 +437,7 @@ def train():
         roc_auc = auc(fpr, tpr)
 
         # Salva dados da curva ROC na pasta organizada
-        roc_data_path = ROC_CURVE_DIR / f'roc_data_epoch_{epoch + 1:03d}.npz'
+        roc_data_path = roc_curve_dir / f'roc_data_epoch_{epoch + 1:03d}.npz'
         np.savez(roc_data_path, fpr=fpr, tpr=tpr, roc_auc=roc_auc)
 
         val_metrics = {
@@ -370,9 +449,10 @@ def train():
         }
         
         print(f"Validação - Acurácia: {val_metrics['accuracy']:.4f}, Precisão: {val_metrics['precision']:.4f}, Revocação: {val_metrics['recall']:.4f}, F1: {val_metrics['f1']:.4f}, AUC-ROC: {val_metrics['auc_roc']:.4f}")
-        manage_top_checkpoints(CHECKPOINT_SAVE_DIR, val_metrics['auc_roc'], epoch, model_rgb, model_flow, optimizer, MODEL_MODE)
-        log_metrics(epoch, epoch_train_loss, val_metrics)
+        manage_top_checkpoints(checkpoint_save_dir, val_metrics['auc_roc'], epoch, model_rgb, model_flow, optimizer, model_mode)
+        log_metrics(epoch, epoch_train_loss, val_metrics, log_file_path)
 
 if __name__ == '__main__':
-    train()
+    args = parse_args()
+    train(args)
 

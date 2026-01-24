@@ -1,17 +1,16 @@
 import os
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import cv2
 import numpy as np
 from natsort import natsorted
-from pathlib import Path
 import random
 import torchvision.transforms.v2 as T
 
 class VideoAugmentation:
     def __init__(self, p_flip=0.5, color_jitter_params=None):
         self.p_flip = p_flip
-        self.color_jitter = T.ColorJitter(**color_jitter_params)
+        self.color_jitter = T.ColorJitter(**color_jitter_params) if color_jitter_params else None
 
     def __call__(self, rgb_tensor, flow_tensor):
         # Flip horizontal
@@ -141,59 +140,3 @@ class ShopliftingDataset(Dataset):
         # 3. Retorna ambos os conjuntos
         return rgb_before, flow_before, rgb_tensor, flow_tensor, torch.tensor(label)
 
-
-if __name__ == '__main__':
-    # --- BLOCO DE TESTE DE SANIDADE ---
-    # Este código só será executado quando você rodar 'uv run src/dataset.py'
-    
-    print("--- Executando teste de sanidade para ShopliftingDataset ---")
-    
-    # Constrói os caminhos a partir da localização deste script
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-    RGB_DIR = PROJECT_ROOT / 'data' / 'i3d_inputs' / 'rgb'
-    FLOW_DIR = PROJECT_ROOT / 'data' / 'i3d_inputs' / 'optical_flow'
-    
-    print(f"Diretório RGB: {RGB_DIR}")
-    print(f"Diretório de Fluxo: {FLOW_DIR}")
-
-    # 1. Instancia o Dataset
-    try:
-        dataset = ShopliftingDataset(rgb_dir=RGB_DIR, flow_dir=FLOW_DIR)
-        print(f"Dataset carregado com sucesso. Total de amostras: {len(dataset)}")
-    except Exception as e:
-        print(f"Erro ao instanciar o dataset: {e}")
-        exit()
-
-    # 2. Testa o __getitem__ para a primeira amostra
-    try:
-        rgb, flow, label = dataset[0]
-        print("\n--- Testando uma única amostra (dataset[0]) ---")
-        print(f"Formato do tensor RGB: {rgb.shape}")
-        print(f"Formato do tensor de Fluxo: {flow.shape}")
-        print(f"Rótulo: {label}")
-        assert rgb.shape == (3, 64, 224, 224)
-        assert flow.shape == (2, 64, 224, 224)
-        print("Dimensões da amostra única estão corretas.")
-    except Exception as e:
-        print(f"Erro ao buscar a primeira amostra: {e}")
-        exit()
-
-    # 3. Cria um DataLoader para testar o agrupamento em lotes
-    data_loader = DataLoader(dataset, batch_size=4, shuffle=True)
-    
-    # 4. Pega o primeiro lote
-    try:
-        rgb_batch, flow_batch, labels_batch = next(iter(data_loader))
-        print("\n--- Testando um lote do DataLoader (batch_size=4) ---")
-        print(f"Formato do lote RGB: {rgb_batch.shape}")
-        print(f"Formato do lote de Fluxo: {flow_batch.shape}")
-        print(f"Formato do lote de Rótulos: {labels_batch.shape}")
-        assert rgb_batch.shape == (4, 3, 64, 224, 224)
-        assert flow_batch.shape == (4, 2, 64, 224, 224)
-        assert labels_batch.shape == (4,)
-        print("Dimensões do lote estão corretas.")
-    except Exception as e:
-        print(f"Erro ao buscar um lote do DataLoader: {e}")
-        exit()
-        
-    print("\n--- Teste de sanidade concluído com sucesso! ---")
