@@ -1,1 +1,2 @@
 from i3d_shoplifting.training.train import TrainConfig, train
+from i3d_shoplifting.training.find_max_batch_size import find_max_batch_size
