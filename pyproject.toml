@@ -1,13 +1,13 @@
 [project]
 name = "i3d-shoplifting"
 version = "0.1.0"
-description = "Project for fine tuning I3D model as a binary Shoplifting classificator"
-requires-python = "==3.11.11"
+description = "Fine tuning I3D for binary shoplifting classification"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "numpy>=2.3.1",
     "opencv-contrib-python>=4.11.0.86",
-    "torch>=2.7.1",
-    "torchvision>=0.22.1",
+    "torch>=2.9,<3.0",
+    "torchvision>=0.24,<0.25",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +19,10 @@ dev = [
     "scikit-learn",
     "seaborn",
 ]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

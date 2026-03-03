@@ -15,8 +15,8 @@ import random
 import argparse
 
 # Importa as classes que criamos
-from src.models.i3d_pytorch import InceptionI3d
-from src.common.dataset import ShopliftingDataset, VideoAugmentation
+from i3d_shoplifting.models.i3d_pytorch import InceptionI3d
+from i3d_shoplifting.dataset.dataset import ShopliftingDataset, VideoAugmentation
 
 # --- 1. CONFIGURAÇÃO E HIPERPARÂMETROS ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
