@@ -168,8 +168,6 @@ if __name__ == '__main__':
         source_blocks_dir = args.source_blocks_dir
         output_rgb_dir = args.output_rgb_dir
         num_frames = args.num_frames
-    
-    args = parser.parse_args()
 
     if args.overwrite and os.path.exists(output_rgb_dir):
         print(f"Aviso: Limpando diretório de saída '{output_rgb_dir}' (--overwrite).")

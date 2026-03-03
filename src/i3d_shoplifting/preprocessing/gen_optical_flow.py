@@ -80,7 +80,6 @@ def main(source_rgb_dir, output_flow_dir):
 
     try:
         block_folders = natsorted(os.listdir(source_rgb_dir))
-        print(block_folders)
     except FileNotFoundError:
         print(f"ERRO: Diretório de input RGB '{source_rgb_dir}' não encontrado. Abortando.")
         return

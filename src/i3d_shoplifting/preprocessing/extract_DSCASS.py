@@ -78,10 +78,13 @@ def identify_event_blocks_with_context(dataset_root, annotations_df):
                 extended_block = add_context_to_shoplifting_block(
                     block, situation_clip_data
                 )
-                all_blocks.append(('Shoplifting', extended_block))
+                extended_clip_paths = [d['path'] for d in extended_block]
+                all_blocks.append({'label': label, 'clip_paths': extended_clip_paths})
             else:
-                all_blocks.append(('Normal', block))
+                block_clip_paths = [d['path'] for d in block]
+                all_blocks.append({'label': label, 'clip_paths': block_clip_paths})
     
+    print(f"Identificação concluída. Total de {len(all_blocks)} blocos de eventos encontrados.")
     return all_blocks
 
 def add_context_to_shoplifting_block(shoplifting_block, all_clips):
@@ -112,136 +115,6 @@ def add_context_to_shoplifting_block(shoplifting_block, all_clips):
         extended_block.append(all_clips[last_idx + 1])
     
     return extended_block
-
-def process_all_blocks_with_ffmpeg(all_blocks, output_dir):
-    """
-    Processa todos os blocos extraídos usando FFmpeg para concatenar e extrair frames.
-    """
-    print(f"Processando {len(all_blocks)} blocos...")
-    
-    # Cria diretório de saída
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Contadores para nomeação
-    normal_count = 0
-    shoplifting_count = 0
-    
-    success_count = 0
-    
-    for label, block in tqdm(all_blocks, desc="Processando blocos"):
-        try:
-            if label == 'Normal':
-                block_name = f"Normal_{normal_count}"
-                normal_count += 1
-            else:
-                block_name = f"Shoplifting_{shoplifting_count}"
-                shoplifting_count += 1
-            
-            block_output_dir = os.path.join(output_dir, block_name)
-            os.makedirs(block_output_dir, exist_ok=True)
-            
-            # Se bloco tem apenas um clipe, extrai diretamente
-            if len(block) == 1:
-                clip_path = block[0]['path']
-                extract_frames_from_video(clip_path, block_output_dir)
-            else:
-                # Concatena múltiplos clipes e extrai frames
-                concatenate_and_extract_frames(block, block_output_dir)
-            
-            success_count += 1
-            
-        except Exception as e:
-            print(f" Erro ao processar bloco {label}: {e}")
-    
-    print(f" Processados com sucesso: {success_count}/{len(all_blocks)} blocos")
-    return success_count > 0
-
-def extract_frames_from_video(video_path, output_dir):
-    """
-    Extrai frames de um único vídeo.
-    """
-    cmd = [
-        'ffmpeg', '-i', video_path,
-        '-r', '25',  # 25 FPS
-        '-y',  # Overwrite
-        os.path.join(output_dir, 'frame_%06d.jpg')
-    ]
-    
-    subprocess.run(cmd, check=True, capture_output=True)
-
-def concatenate_and_extract_frames(block, output_dir):
-    """
-    Concatena múltiplos vídeos de um bloco e extrai frames.
-    """
-    # Cria arquivo temporário com lista de vídeos
-    clip_list_file = os.path.join(output_dir, 'clip_list.txt')
-    
-    with open(clip_list_file, 'w') as f:
-        for clip_data in block:
-            f.write(f"file '{clip_data['path']}'\n")
-    
-    # Concatena e extrai frames
-    temp_video = os.path.join(output_dir, 'concatenated.mp4')
-    
-    # Concatenar
-    concat_cmd = [
-        'ffmpeg', '-f', 'concat', '-safe', '0',
-        '-i', clip_list_file,
-        '-c', 'copy', '-y', temp_video
-    ]
-    
-    subprocess.run(concat_cmd, check=True, capture_output=True)
-    
-    # Extrair frames
-    extract_cmd = [
-        'ffmpeg', '-i', temp_video,
-        '-r', '25',  # 25 FPS
-        '-y',  # Overwrite
-        os.path.join(output_dir, 'frame_%06d.jpg')
-    ]
-    
-    subprocess.run(extract_cmd, check=True, capture_output=True)
-    
-    # Limpa arquivos temporários
-    try:
-        os.remove(clip_list_file)
-        os.remove(temp_video)
-    except:
-        pass
-
-        # Itera sobre a lista de clipes da situação para identificar os blocos
-        i = 0
-        while i < len(situation_clip_data):
-            start_index = i
-            current_label = situation_clip_data[start_index]['label']
-            
-            # Encontra o final do bloco contíguo
-            end_index = start_index
-            while end_index + 1 < len(situation_clip_data) and situation_clip_data[end_index + 1]['label'] == current_label:
-                end_index += 1
-            
-            # Extrai os caminhos dos clipes para o bloco atual
-            block_clip_paths = [d['path'] for d in situation_clip_data[start_index : end_index + 1]]
-
-            # Se o bloco for de Shoplifting, adiciona os clipes vizinhos (se existirem)
-            if current_label == 1:
-                # Adiciona o clipe anterior, se não for o primeiro da situação
-                if start_index > 0:
-                    context_before_path = situation_clip_data[start_index - 1]['path']
-                    block_clip_paths.insert(0, context_before_path)
-                
-                # Adiciona o clipe posterior, se não for o último da situação
-                if end_index < len(situation_clip_data) - 1:
-                    context_after_path = situation_clip_data[end_index + 1]['path']
-                    block_clip_paths.append(context_after_path)
-
-            all_blocks.append({'label': current_label, 'clip_paths': block_clip_paths})
-            
-            # Pula para o início do próximo bloco
-            i = end_index + 1
-            
-    print(f"Identificação concluída. Total de {len(all_blocks)} blocos de eventos encontrados.")
-    return all_blocks
 
 def process_and_extract_blocks(blocks_list, output_root_dir):
     """
