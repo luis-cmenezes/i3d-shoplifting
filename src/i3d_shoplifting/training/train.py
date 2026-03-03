@@ -13,6 +13,7 @@ import numpy as np
 import cv2
 import random
 import argparse
+from dataclasses import dataclass, field
 
 # Importa as classes que criamos
 from i3d_shoplifting.models.i3d_pytorch import InceptionI3d
@@ -21,8 +22,52 @@ from i3d_shoplifting.dataset.dataset import ShopliftingDataset, VideoAugmentatio
 # --- 1. CONFIGURAÇÃO E HIPERPARÂMETROS ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+NUM_CLASSES = 1  # A saída única representa a probabilidade de ser Shoplifting
 
-def parse_args():
+
+# ---------------------------------------------------------------------------
+# Dataclass de configuração — interface pública para chamadas externas
+# ---------------------------------------------------------------------------
+@dataclass
+class TrainConfig:
+    """Configuração completa para um experimento de treino I3D."""
+
+    # Modalidade e estratégia de fine-tuning
+    model_mode: str = "rgb_optical"          # "rgb_optical" | "rgb_only"
+    unfreeze_full_model: bool = False
+
+    # Hiperparâmetros
+    epochs: int = 70
+    batch_size: int = 1
+    learning_rate: float = 1e-3
+    seed: int = 42
+
+    # Caminhos de dados (devem estar resolvidos / absolutos)
+    rgb_dir: str = ""
+    flow_dir: str = ""
+
+    # Checkpoints pré-treinados
+    rgb_checkpoint: str = ""
+    flow_checkpoint: str = ""
+
+    # Saída
+    output_dir: str = ""
+
+    # Divisão do dataset
+    split_test_size: float = 0.3
+    split_val_test_ratio: float = 0.5
+
+    # Data augmentation
+    augmentation_p_flip: float = 0.5
+    augmentation_color_jitter: dict = field(
+        default_factory=lambda: dict(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
+    )
+
+    # Visualização
+    steps_to_visualize_per_epoch: int = 2
+
+def parse_args() -> TrainConfig:
+    """Analisa argumentos CLI e devolve um TrainConfig (uso standalone)."""
     parser = argparse.ArgumentParser(description="Fine-tuning do I3D para classificação binária de Shoplifting")
     parser.add_argument(
         "--model-mode",
@@ -95,7 +140,22 @@ def parse_args():
         default=2,
         help="Quantos batches aleatórios por época salvar em vídeo (RGB before/after).",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    return TrainConfig(
+        model_mode=args.model_mode,
+        unfreeze_full_model=args.unfreeze_full_model,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        seed=args.seed,
+        rgb_dir=args.rgb_dir,
+        flow_dir=args.flow_dir,
+        rgb_checkpoint=args.rgb_checkpoint,
+        flow_checkpoint=args.flow_checkpoint,
+        output_dir=args.output_dir,
+        steps_to_visualize_per_epoch=args.steps_to_visualize_per_epoch,
+    )
 
 
 def seed_everything(seed: int):
@@ -105,8 +165,6 @@ def seed_everything(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-
-NUM_CLASSES = 1 # A saída única representa a probabilidade de ser Shoplifting
 
 def save_video_comparison(rgb_before_batch, rgb_after_batch, label_batch, output_path, fps=10):
     """
@@ -251,20 +309,24 @@ def log_metrics(epoch, train_loss, val_metrics, log_file_path: Path):
             val_metrics['auc_roc']
         ])
 
-def train(args):
-    """Função principal que orquestra todo o processo de treinamento e visualização."""
-    seed_everything(args.seed)
+def train(cfg: TrainConfig):
+    """Função principal que orquestra todo o processo de treinamento e visualização.
 
-    model_mode = args.model_mode
-    unfreeze_full_model = args.unfreeze_full_model
+    Args:
+        cfg: instância de TrainConfig com todos os parâmetros do experimento.
+    """
+    seed_everything(cfg.seed)
+
+    model_mode = cfg.model_mode
+    unfreeze_full_model = cfg.unfreeze_full_model
     test_name = f'aug_{"full_unfreeze" if unfreeze_full_model else "head_unfreeze"}_{model_mode}'
 
-    rgb_dir = Path(args.rgb_dir)
-    flow_dir = Path(args.flow_dir)
-    rgb_checkpoint = Path(args.rgb_checkpoint)
-    flow_checkpoint = Path(args.flow_checkpoint)
+    rgb_dir = Path(cfg.rgb_dir)
+    flow_dir = Path(cfg.flow_dir)
+    rgb_checkpoint = Path(cfg.rgb_checkpoint)
+    flow_checkpoint = Path(cfg.flow_checkpoint)
 
-    base_output_dir = Path(args.output_dir) / test_name
+    base_output_dir = Path(cfg.output_dir) / test_name
     checkpoint_save_dir = base_output_dir / 'model_weights'
     visualization_dir = base_output_dir / 'input_visualizations'
     roc_curve_dir = base_output_dir / 'roc_curves'
@@ -279,9 +341,10 @@ def train(args):
     print(f"Todos os outputs serão salvos em: {base_output_dir}")
 
     # --- 2. PREPARAÇÃO DO DATASET E DIVISÃO ---
+    augmentation_cj = cfg.augmentation_color_jitter
     transform_train = VideoAugmentation(
-        p_flip=0.5,
-        color_jitter_params=dict(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
+        p_flip=cfg.augmentation_p_flip,
+        color_jitter_params=augmentation_cj if augmentation_cj else None,
     )
 
     dataset_with_aug = ShopliftingDataset(rgb_dir=rgb_dir, flow_dir=flow_dir, transform=transform_train)
@@ -290,11 +353,11 @@ def train(args):
     indices = list(range(len(dataset_with_aug)))
     labels = [dataset_with_aug.get_label(idx) for idx in indices]
 
-    # Divide em 70% treino, 15% validação, 15% teste
+    # Divide usando as proporções configuráveis
     train_indices, temp_indices, train_labels, temp_labels = train_test_split(
-        indices, labels, test_size=0.3, random_state=42, stratify=labels)
+        indices, labels, test_size=cfg.split_test_size, random_state=cfg.seed, stratify=labels)
     val_indices, test_indices, val_labels, test_labels = train_test_split(
-        temp_indices, temp_labels, test_size=0.5, random_state=42, stratify=temp_labels)
+        temp_indices, temp_labels, test_size=cfg.split_val_test_ratio, random_state=cfg.seed, stratify=temp_labels)
 
     # Cria Subsets apontando para os Datasets corretos
     train_dataset = Subset(dataset_with_aug, train_indices)
@@ -304,14 +367,14 @@ def train(args):
     print(f"Treino: {len(train_dataset)} amostras - {sum(train_labels)} Shoplifting | {len(train_labels) - sum(train_labels)} Normal")
     print(f"Validação: {len(val_dataset)} amostras - {sum(val_labels)} Shoplifting | {len(val_labels) - sum(val_labels)} Normal")
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False)
 
     # Seleciona os steps (índices de batch) que iremos salvar para visualização
     num_train_steps = len(train_loader)
     steps_to_visualize = random.sample(
         range(num_train_steps),
-        min(args.steps_to_visualize_per_epoch, num_train_steps) # Garante que não tentemos amostrar mais do que existe
+        min(cfg.steps_to_visualize_per_epoch, num_train_steps)
     )
     print(f"Visualizações de treino serão salvas nos steps (batches): {steps_to_visualize}")
 
@@ -357,7 +420,7 @@ def train(args):
     trainable_params = [p for p in model_rgb.parameters() if p.requires_grad]
     if model_mode == 'rgb_optical':
         trainable_params.extend([p for p in model_flow.parameters() if p.requires_grad])
-    optimizer = optim.Adam(trainable_params, lr=args.learning_rate)
+    optimizer = optim.Adam(trainable_params, lr=cfg.learning_rate)
     
     # Calcula o peso para a classe positiva (Shoplifting) para a BCEWithLogitsLoss
     num_normal = len(train_labels) - sum(train_labels)
@@ -369,8 +432,8 @@ def train(args):
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # --- 5. LOOP DE TREINAMENTO E VALIDAÇÃO ---
-    for epoch in range(args.epochs):
-        print(f"\n--- Epoch {epoch + 1}/{args.epochs} ---")
+    for epoch in range(cfg.epochs):
+        print(f"\n--- Epoch {epoch + 1}/{cfg.epochs} ---")
         
         epoch_viz_dir = visualization_dir / f'epoch_{epoch+1:03d}'
         epoch_viz_dir.mkdir(exist_ok=True)
@@ -453,6 +516,6 @@ def train(args):
         log_metrics(epoch, epoch_train_loss, val_metrics, log_file_path)
 
 if __name__ == '__main__':
-    args = parse_args()
-    train(args)
+    cfg = parse_args()
+    train(cfg)
 

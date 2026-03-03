@@ -87,7 +87,8 @@ class ShopliftingDataset(Dataset):
         for i in range(1, 65):
             frame_path = os.path.join(rgb_block_path, f"frame_{i:06d}.jpg")
             frame = cv2.imread(frame_path)
-            if frame is None: continue
+            if frame is None:
+                continue
             # Converte de BGR (OpenCV) para RGB
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb_frames.append(frame)
@@ -106,7 +107,8 @@ class ShopliftingDataset(Dataset):
             flow_x = cv2.imread(flow_x_path, cv2.IMREAD_GRAYSCALE)
             flow_y = cv2.imread(flow_y_path, cv2.IMREAD_GRAYSCALE)
             
-            if flow_x is None or flow_y is None: continue
+            if flow_x is None or flow_y is None:
+                continue
             
             # Empilha os fluxos x e y para formar um "frame" de 2 canais
             flow_frames.append(np.stack([flow_x, flow_y], axis=-1))

@@ -101,7 +101,7 @@ class InceptionI3d(nn.Module):
         """Substitui a camada de classificação final. Para o modelo de saída única,
         garante que a saída seja 1."""
         if num_classes != 1:
-            print(f"AVISO: Para a classificação binária com Sigmoid, 'num_classes' deveria ser 1. Ajustando...")
+            print("AVISO: Para a classificação binária com Sigmoid, 'num_classes' deveria ser 1. Ajustando...")
         
         self.num_classes = 1
         self.logits = nn.Conv3d(1024, self.num_classes, kernel_size=(1, 1, 1), stride=1, bias=True)
