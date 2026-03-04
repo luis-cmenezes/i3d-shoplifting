@@ -1,4 +1,5 @@
 import os
+import sys
 import cv2
 import numpy as np
 from tqdm import tqdm
@@ -177,19 +178,35 @@ def main(source_rgb_dir: str, output_flow_dir: str, num_workers: int = 0) -> Non
     print(f"    Workers: {num_workers}")
     print(f"    Blocos:  {len(work_items)}\n")
 
+    total = len(work_items)
+    skipped: list[str] = []
+
+    # Quando stderr não é terminal (redirecionado para arquivo), o tqdm
+    # usa \r que não funciona em logs. Configurações para funcionar bem
+    # em ambos os cenários:
+    is_tty = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+    tqdm_kwargs = dict(
+        total=total,
+        desc="Processando Blocos para Fluxo Ótico",
+        file=sys.stderr,
+        # Em arquivo: imprime uma linha por atualização, a cada ~5%
+        # Em terminal: comportamento normal com \r
+        mininterval=0 if is_tty else 10,
+        miniters=1 if is_tty else max(1, total // 20),
+    )
+
     if num_workers == 1:
         # Execução sequencial — sem overhead de fork
-        skipped = []
-        for item in tqdm(work_items, desc="Processando Blocos para Fluxo Ótico"):
+        for item in tqdm(work_items, **tqdm_kwargs):
             result = _worker(item)
             if result:
                 skipped.append(result)
     else:
         # Execução paralela com multiprocessing
-        skipped = []
+        # chunksize=1 garante que a barra atualiza a cada bloco concluído
         with Pool(processes=num_workers) as pool:
-            results = pool.imap_unordered(_worker, work_items, chunksize=4)
-            for result in tqdm(results, total=len(work_items), desc="Processando Blocos para Fluxo Ótico"):
+            results = pool.imap_unordered(_worker, work_items, chunksize=1)
+            for result in tqdm(results, **tqdm_kwargs):
                 if result:
                     skipped.append(result)
 
